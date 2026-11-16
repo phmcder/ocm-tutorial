@@ -1,0 +1,30 @@
+services:
+  ca-init:
+    image: alpine/k8s:1.37.2
+    user: root
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        sh /bootstrap/build-ca-bundle.sh /shared/issuing-cas.pem \
+          > /shared/ca-certificates.crt.tmp
+        chmod 644 /shared/ca-certificates.crt.tmp
+        mv /shared/ca-certificates.crt.tmp /shared/ca-certificates.crt
+    volumes:
+      - ./scripts:/bootstrap:ro
+      - ca-bundle:/shared
+
+  zob:
+    image: ghcr.io/project-zot/zot-linux-arm64:v2.1.23
+    ports:
+      - "5000:5000"
+    depends_on:
+      ca-init:
+        condition: service_completed_successfully
+    environment:
+      - SSL_CERT_FILE=/shared/ca-certificates.crt
+    volumes:
+      - ca-bundle:/shared:ro
+
+volumes:
+  ca-bundle:
