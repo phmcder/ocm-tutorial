@@ -13,7 +13,7 @@ The OCI registry is a simple `key.value` store, with the key being the hash/dige
 
 OCI standardises the format for Manifest files that store the details of an object and how they relate to other objects. A manifest file entry has three essential parts, the `digest`, `size` and the `mediaType` or the target object. Using these three elements a tool can pull a the correct number of bytes for an object from the registry using the `digest` key and know what those bytes represent based on the `mediaType`.
 
-One example of an OCI tool is the Docker CLI. Each command will 
+One example of an OCI tool is the Docker CLI. When we ask Docker to pull a container we first point it at a manifest. Using that, docker then works out what other objects to download until it has the whole container. We point Docker to the correct manifest by giving docker the digest value for the file but that looks messy. Tags are another part of the OCI standard that act as an alias for digest values. I can tell docker to download the tag 
 
 
 
@@ -106,6 +106,47 @@ tar -xzf "./_output/hello-world-oci/blobs/sha256/fea5b91588ca539ff8a89d7d5df6c6d
   -C "./_output/extracted-layer"
 ```
 You will the the file looks very simliar to and operating system layout as that is exactly what it is. The layer is the contents of the docker container `alpine:3.22` we used as the base for our container.
+
+## Push to OCI Registry
+```bash
+docker build . --tag localhost:5000/hello-world:1.0.0 --platform "linux/arm64"
+docker push localhost:5000/hello-world:1.0.0
+```
+
+```bash
+oras manifest fetch localhost:5000/hello-world:1.0.0
+```
+output
+```json
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.index.v1+json",
+  "manifests": [
+    {
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "digest": "sha256:3758bbde04ad2177b5c22b3fa378daad71b77636c383ca4c16fdca2f12c7cb4b",
+      "size": 480,
+      "platform": {
+        "architecture": "arm64",
+        "os": "linux"
+      }
+    },
+    {
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "digest": "sha256:1b41aced0ead5657750a08b8db3e918778be44afc0d1263a684c385691f8ae5e",
+      "size": 836,
+      "annotations": {
+        "vnd.docker.reference.digest": "sha256:3758bbde04ad2177b5c22b3fa378daad71b77636c383ca4c16fdca2f12c7cb4b",
+        "vnd.docker.reference.type": "attestation-manifest"
+      },
+      "platform": {
+        "architecture": "unknown",
+        "os": "unknown"
+      }
+    }
+  ]
+}
+```
 
 ## Multi Layer file.
 Our test container only had a single layer because it was a very simple example. If the `dockerfile` was more complex, we would see more layers. Each is layer is applied in order and corresponds to a file system change applied to the previous layer.  If our `dockerfile` contain any of the following instructions we would expect to see each on as a container layer.
