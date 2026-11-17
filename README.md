@@ -1,122 +1,131 @@
-# Pre-Requisites
-To follow this tutorial you need the 
-
-
-
 # Docker and OCI
-In this tutorial we will be looking at the structure of an OCI registry and how it stores information. OCI stands for the Open Container Initiative and it defines the specifications and standards for container building and deployment. Docker donated it's container runtime code as the starting point of the OCI in June 2015. The OCI standard has expanded into 3 separate and related standards: 
+In this tutorial we will be looking at the structure of an OCI registry and how it stores information.
+
+# OCI 1.0
+
+The Open Container Initiative (OCI) is a Linux Foundation project, started in June 2015 by Docker, CoreOS, and the maintainers of `appc` (short for "App Container") to design open standards for operating system-level virtualization (containers). There are currently three OCI specifications in development and use: 
 - *Runtime*: how to configure and execute a container.
 - *Image*: how to package configuration, filesystem layers, and manifests.
 - *Distribution*: how to transfer images and other content through registries, based on Docker’s Registry HTTP API V2.
 
-The OCI registry is a simple `key.value` store, with the key being the hash/digest of the stored object (current convention is to use SHA256 for hashing). The data is stored as binary so can support anything you wish.  
+The OCI Image Format Project was split out from the Runtime Project into its own specification on March 23, 2016 and was ratified into version 1.0.0 on July 19, 2017.
 
-OCI standardises the format for Manifest files that store the details of an object and how they relate to other objects. A manifest file entry has three essential parts, the `digest`, `size` and the `mediaType` or the target object. Using these three elements a tool can pull a the correct number of bytes for an object from the registry using the `digest` key and know what those bytes represent based on the `mediaType`.
+The first release defined the structure of a container. At it's base level, a container is a collection of binary object which can be retrieved by their digest (sha256 hash of the object). To make it easier for an application to decode those binary objects, the OCI standard defines a number of `mediaTypes`.
 
-One example of an OCI tool is the Docker CLI. When we ask Docker to pull a container we first point it at a manifest. Using that, docker then works out what other objects to download until it has the whole container. We point Docker to the correct manifest by giving docker the digest value for the file but that looks messy. Tags are another part of the OCI standard that act as an alias for digest values. I can tell docker to download the tag 
+- `application/vnd.oci.image.index.v1+json` — image index
+- `application/vnd.oci.image.manifest.v1+json` — image manifest
+- `application/vnd.oci.image.config.v1+json` — image configuration
+- `application/vnd.oci.image.layer.v1.tar` — uncompressed layer
+- `application/vnd.oci.image.layer.v1.tar+gzip` — gzip-compressed layer
 
-
-
-# Making a simple container
-To understand how they all work lets start by making a container. The below is the contents for the `dockerfile`
-```dockerfile
-FROM alpine:3.22
-CMD echo 'hello world!'
+The different `mediaTypes` are arranged in a Hierarchical Graph shown below
+```mermaid
+graph TD
+index[Image Index\n`application/vnd.oci.image.index.v1+json`] -->|1 to many| manifest[Image Manifest\n`application/vnd.oci.image.manifest.v1+json`]
+manifest -->|1 to 1| config[Image Configuration\n`application/vnd.oci.image.config.v1+json` ]
+manifest -->|1 to many| layers[Binary Layers\n`application/vnd.oci.image.layer.v1.tar`\n`application/vnd.oci.image.layer.v1.tar+gzip`]
 ```
 
-We can instruct docker to build the image using the OCI specification and output the container to a directory using the following
-```bash
-docker build . \
-  --file "dockerfile" \
-  --platform "linux/arm64" \
-  --tag "hello-world:v1" \
-  --provenance=false \
-  --sbom=false \
-  --output "type=oci,tar=false,dest=./_output/hello-world"
-```
-The current `./_output` directory has the following structure (the command above uses `hello-world` as its output directory instead of `hello-world-oci`):
-
-```text
-_output/
-`-- hello-world/
-    |-- index.json
-    |-- oci-layout
-    `-- blobs/
-        `-- sha256/
-            |-- 3758bbde04ad2177b5c22b3fa378daad71b77636c383ca4c16fdca2f12c7cb4b
-            |-- a5a08aa603fb886d94892aeb26a33acc1568d24c0e2c291ce5b621680b020f67
-            `-- fea5b91588ca539ff8a89d7d5df6c6d65d6ab7bd89145ba57f32c302cf02ffbe
-```
-
-Next we look at the structure of the file `index.json`
+## Content Descriptors
+References between components in the graph are expressed through *Content Descriptors*. A Content Descriptor includes the `mediaType` of the (digest) which is used to identify and retrieve the content, and the byte-size of the raw stored data. Below is an example of a *Content Descriptors*
 ```json
 {
-  "schemaVersion": 2,
-  "mediaType": "application/vnd.oci.image.index.v1+json",
-  "manifests": [
-    {
-      "mediaType": "application/vnd.oci.image.manifest.v1+json",
-      "digest": "sha256:3758bbde04ad2177b5c22b3fa378daad71b77636c383ca4c16fdca2f12c7cb4b",
-      "size": 480,
-      "annotations": {
-        "io.containerd.image.name": "docker.io/library/hello-world:v1",
-        "org.opencontainers.image.created": "2026-11-15T22:19:30Z",
-        "org.opencontainers.image.ref.name": "v1"
-      },
-      "platform": { "architecture": "arm64", "os": "linux" }
-    }
-  ]
+  "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+  "size": 7682,
+  "digest": "sha256:5b0bcabd1ed22e9fb1310cf6c2dec7cdef19f0ad69efa1f392e94a4333501270",
+  "annotatons": {    
+    "com.example.layer-purpose": "application-layer",
+    "com.example.compressed-algorithm": "gzip",
+    "com.example.includes": "node_modules,bin"
+  }
 }
 ```
-When we are decoding the contents of a manifest file we need to look at the various `mediaTypes`. The table below details some of this defined in the OCI standard.
+The `descriptor` contains everything an application need to know when interacting with content. It know how many bytes to download, how to request it via the `digest` and the storage format of the data. The described content might not be a single file, but be one-part in a mutli-part download that has to complete before the final object is constructed
 
-| Purpose | OCI mediaType |
-| --- | --- | --- |
-| Single-image manifest | `application/vnd.oci.image.manifest.v1+json` |
-| Image configuration | `application/vnd.oci.image.config.v1+json` |
-| Gzip-compressed filesystem layer | `application/vnd.oci.image.layer.v1.tar+gzip` |
-| Image Index / Multi-platform manifest list | `application/vnd.oci.image.index.v1+json` |
+Whilst `mediaType`, `size` and `digest` are mandatory, `annotations` are optional. They can be useful to provide an application more context about what they are accessing. You are free to use any key anem you wish, but the OCI standard has defined some predefine keys:
 
-We see that the `index.json` file is an Image Index. For our container there is just one manifest in the manifest list. The single manifest entry has it's own `mediaType`, telling us it's reference to a Single-Image manifest, `platform` details telling use what platform this image supports (In my can this was build on an `arm64` processor) and some `annotations` containing some metadata.
+- `org.opencontainers.image.created` date and time on which the image was built (string, date-time as defined by RFC 3339).
+- `org.opencontainers.image.authors` contact details of the people or organization responsible for the image (freeform string)
+- `org.opencontainers.image.url` URL to find more information on the image (string)
+- `org.opencontainers.image.documentation` URL to get documentation on the image (string)
+- `org.opencontainers.image.source` URL to get source code for building the image (string)
+- `org.opencontainers.image.version` version of the packaged software
+- `org.opencontainers.image.revision` Source control revision identifier for the packaged software.
+- `org.opencontainers.image.vendor` Name of the distributing entity, organization or individual.
+- `org.opencontainers.image.licenses` License(s) under which contained software is distributed as an SPDX License Expression.
+- `org.opencontainers.image.ref.name` Name of the reference for a target (string).
 
-The important value is the `digest`. This is simply the `sha256` value of the underlaying object, but is also used to locate the item in a OCI registry. Open the `_output/hello-world/blobs/sha256/` directory and look for an item that has a matching name as the value of the `digest`. Below is an example of the files contents (your digests may be different).
 
+## Image Manifests
+The *Image Manifest* (`application/vnd.oci.image.manifest.v1+json`) pulls multiple Content Descriptors together to describe an and OCI `Image`. Here is an example
 ```json
 {
   "schemaVersion": 2,
   "mediaType": "application/vnd.oci.image.manifest.v1+json",
   "config": {
     "mediaType": "application/vnd.oci.image.config.v1+json",
-    "digest": "sha256:a5a08aa603fb886d94892aeb26a33acc1568d24c0e2c291ce5b621680b020f67",
-    "size": 821
+    "size": 7023,
+    "digest": "sha256:b5b2b2c507a0944348e0303114d8d93aaaa081732b86451d9bce1f432a537bc7"
   },
   "layers": [
     {
       "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-      "digest": "sha256:fea5b91588ca539ff8a89d7d5df6c6d65d6ab7bd89145ba57f32c302cf02ffbe",
-      "size": 4127385
+      "size": 32654,
+      "digest": "sha256:e692418e4cbaf90ca69d05a66403747baa33ee08806650b51fab815ad7fc331f"
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "size": 16724,
+      "digest": "sha256:3c3a4604a545cdc127456d94e421cd355bca5b528f4a9c1905b15da2eb4a4c6b"
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "size": 73109,
+      "digest": "sha256:ec4b8955958665577945c89419d1af06b5f7636b4ac3da7f12184802ad867736"
     }
-  ]
+  ],
+  "annotations": {
+    "com.example.key1": "value1",
+    "com.example.key2": "value2"
+  }
 }
 ```
-Looking at this `mediaType` of this manifest, we see it is a `Single Image Manifest`. As laid out the the OCI standard, this file must container a `config` and multiple `layers`. The `digest` value of the `config` and single `layer` point to the other two files in the `blobs/sha256` directory. You will find that the `config` is a json file of metadata and the `layer` is a `tar.gzip` binary file. If you are interested to see the layers contents, change the file extensions of the `layer` to end in `tar.gzip` the explode the file using the following
-```bash
-mkdir -p ./_output/extracted-layer
-tar -xzf "./_output/hello-world-oci/blobs/sha256/fea5b91588ca539ff8a89d7d5df6c6d65d6ab7bd89145ba57f32c302cf02ffbe.tar.gzip" \
-  -C "./_output/extracted-layer"
-```
-You will the the file looks very simliar to and operating system layout as that is exactly what it is. The layer is the contents of the docker container `alpine:3.22` we used as the base for our container.
+An OCI Image is composed of `layers`. Each layer represents a set of filesystem changes in a tar-based layer format, recording files to be added, changed, or deleted relative to the intial parent layer. Layers MUST be downloaded in order because each is an incremental change to the previous layer. For example the first layer maybe a base operating system image, with subsequent layers copying more files to build the complete image.
 
-## Push to OCI Registry
-```bash
-docker build . --tag localhost:5000/hello-world:1.0.0 --platform "linux/arm64"
-docker push localhost:5000/hello-world:1.0.0
+In the OCI manifest specification `config` is mandatory and is a content descriptor for a json document. In relation to OCI Container Images, this document it used to tell a container runtime how to deploy the images. However the specification did not state that the `mediaType` of the config had to be `application/vnd.oci.image.config.v1+json` nor that is had to have a content that complies with the standard. Any deviation would make this image useless to a container runtime but flexibility in definition did open up the OCI specification to be used for storing other things.
+
+When the Helm community released Helm 3.8.0, they added support for pushing charts into an OCI Image registry by reusing the Image Manifest definition. And example of an Image Manifest for a helm chart is below:
+```json
+{
+  "schemaVersion": 2,
+  "config": {
+    "mediaType": "application/vnd.cncf.helm.config.v1+json",
+    "digest": "sha256:29ceb39d2de5f21ed34132328e61dbfe42f0ee18c64c9662d8d6d2446c27b661",
+    "size": 157
+  },
+  "layers": [
+    {
+      "mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+      "digest": "sha256:5e17506d098c893015e65720881c8e15eaa2af85536840b74b6464da73f4a164",
+      "size": 371
+    }
+  ],
+  "annotations": {
+    "org.opencontainers.image.created": "2026-11-16T19:29:45Z",
+    "org.opencontainers.image.description": "A Helm chart to deploy a hello-world pod",
+    "org.opencontainers.image.title": "hello-world",
+    "org.opencontainers.image.version": "1.0.0"
+  }
+}
 ```
 
-```bash
-oras manifest fetch localhost:5000/hello-world:1.0.0
-```
-output
+A user can use the Helm cli to pull the chart from the registry using `helm pull oci://example.com/example-chart:1.0.0` in a similar way to `docker pull`. If you look closely at the manifest above, it differentiates itself from being a definition of a Container Image by using `mediaTypes` values defined by the Helm community. The helm cli will first check the `mediaTypes` in the manifest to confirm this is a valid manifest before downloading any content. 
+
+The same goes for other communities that have also appropriated the OCI standard. They also defined their own `mediaTypes` to cover their use cases.
+
+# Image Manifest Index
+
+The final type defined by the OCI spec is the Image Manifest List `application/vnd.oci.image.index.v1+json`. Below is an example of what one may look like:
 ```json
 {
   "schemaVersion": 2,
@@ -124,152 +133,87 @@ output
   "manifests": [
     {
       "mediaType": "application/vnd.oci.image.manifest.v1+json",
-      "digest": "sha256:3758bbde04ad2177b5c22b3fa378daad71b77636c383ca4c16fdca2f12c7cb4b",
-      "size": 480,
+      "size": 7143,
+      "digest": "sha256:e692418e4cbaf90ca69d05a66403747baa33ee08806650b51fab815ad7fc331f",
       "platform": {
-        "architecture": "arm64",
+        "architecture": "ppc64le",
         "os": "linux"
       }
     },
     {
       "mediaType": "application/vnd.oci.image.manifest.v1+json",
-      "digest": "sha256:1b41aced0ead5657750a08b8db3e918778be44afc0d1263a684c385691f8ae5e",
-      "size": 836,
-      "annotations": {
-        "vnd.docker.reference.digest": "sha256:3758bbde04ad2177b5c22b3fa378daad71b77636c383ca4c16fdca2f12c7cb4b",
-        "vnd.docker.reference.type": "attestation-manifest"
-      },
+      "size": 7682,
+      "digest": "sha256:5b0bcabd1ed22e9fb1310cf6c2dec7cdef19f0ad69efa1f392e94a4333501270",
       "platform": {
-        "architecture": "unknown",
-        "os": "unknown"
+        "architecture": "amd64",
+        "os": "linux"
       }
     }
-  ]
+  ],
+  "annotations": {
+    "com.example.key1": "value1",
+    "com.example.key2": "value2"
+  }
 }
 ```
 
-## Multi Layer file.
-Our test container only had a single layer because it was a very simple example. If the `dockerfile` was more complex, we would see more layers. Each is layer is applied in order and corresponds to a file system change applied to the previous layer.  If our `dockerfile` contain any of the following instructions we would expect to see each on as a container layer.
+This is similar to a manifest except that is is a list of content descriptor for manifests not layers/blobs. These become useful when your application want to pull multiple artifacts or a specific artifacts based on a filter. The OCI Image spec has hard coded the use of `platform` as on of the items a user can filter on.
 
-| Instruction |	Effect |
-| --- | --- |
-| FROM	| Uses the base image’s existing layers |
-| RUN	| Usually creates a layer containing filesystem changes |
-| COPY, ADD | Usually create a layer containing added files |
+The `platfrom` attribute allows your users to pull the manifest list using `docker pull` and have returned the manifest that relates to their current OS/Processor configuration. The command `docker pull` has an argument `--platform` which can be used to point docker to the correct manifest if the cli is unable to do set the platform for you. Values may be `linux\arm64`, `windows\386` etc.
 
-Each layer will be compress as `.tar.gzip` and have the mediaType `application/vnd.oci.image.layer.v1.tar+gzip`.
+## OCI 1.1 and ORAS
+As mentioned earlier, many communities started trying to use OCI registries to store there resources along side the OCI Images they build/deploy. Builders wanted to digitally sign their Images and provide and digital Software Bill of Materials (SBOM) so the consumer to have a greater trust in the images the consumed. In an effort to formalise these practices, the ORAS community was formed. ORAS stands for OCI Registry As Storage and their community has worked with the OCI standards body on the writing of OCI standard 1.1 to better support none Container Image use cases. The ORAS website has a list of OCI registries and application that have support for OCI 1.1 and are able to understand manifest that diverge from the container image specification [link](https://oras.land/adopters). They have also produced a CLI tool which will will make much use of in the rest of this tutorial [link](https://oras.land/docs/category/oras-commands).
 
-## Multi Platform Containers
-Our simple container was built to run on our device. It will only suppport our processor and operating system. If we want to build a container that supports more operating systems we can create a build pipeline that compiles the container for multiple device. How we do this is outside the scope of this tutorial. 
+The important changes that came with OCI 1.1 are
 
-Lets look at an existing OCI repository to see what a Multi-Platorm build looks like. We will be using `ghcr.io/stefanprodan/podinfo:6.17.0`. The docker file used to build the container can be found [here](https://github.com/stefanprodan/podinfo/blob/v6.x/Dockerfile). We can query the manifest for this container user the command below.
-```bash
-docker manifest inspect ghcr.io/stefanprodan/podinfo:6.17.0
-```
-Output:
-```json
-{
-   "schemaVersion": 2,
-   "mediaType": "application/vnd.oci.image.index.v1+json",
-   "manifests": [
-      {
-         "mediaType": "application/vnd.oci.image.manifest.v1+json",
-         "size": 1816,
-         "digest": "sha256:4e6ef1224e558caa7feffd577b3cbe76369d8ee43ef42bf800f173d3fef261a1",
-         "platform": {
-            "architecture": "amd64",
-            "os": "linux"
-         }
-      },
-      {
-         "mediaType": "application/vnd.oci.image.manifest.v1+json",
-         "size": 1816,
-         "digest": "sha256:c59a38c0a430f2c4688a8d5af70e08ed04bc0b26dd0097e4117469c7e5968d67",
-         "platform": {
-            "architecture": "arm64",
-            "os": "linux"
-         }
-      },
-      {
-         "mediaType": "application/vnd.oci.image.manifest.v1+json",
-         "size": 1111,
-         "digest": "sha256:13a55bb0c5fbb60e4b43592c6c7feb043a268aeaff355a99d2a991956bdc458f",
-         "platform": {
-            "architecture": "unknown",
-            "os": "unknown"
-         }
-      },
-      {
-         "mediaType": "application/vnd.oci.image.manifest.v1+json",
-         "size": 1111,
-         "digest": "sha256:83db6e6c1a3b8acd864758313815d0fb4b7e257f49788312865fea7ca1461d5e",
-         "platform": {
-            "architecture": "unknown",
-            "os": "unknown"
-         }
-      }
-   ]
-}
-```
-Breaking down this manifest you see it's an Image Index containing a list of references to multiple Single Manifest documents for different Processor architectures and OS. We can query each on one of these entries using the following command with the appropriate hash.
-```bash
-docker manifest inspect ghcr.io/stefanprodan/podinfo@sha256:c59a38c0a430f2c4688a8d5af70e08ed04bc0b26dd0097e4117469c7e5968d67
-```
-Ouput
+### artifactType
+Even though `mediaType` had no hard definition, tools expected its values mean something specific. To remove the ambiguity around `mediaType` usage, OCI 1.1 added an optional `artifactType` parameter to the Content Descriptor definition. Any example of `artifactType` in action is below:
 ```json
 {
   "schemaVersion": 2,
   "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "artifactType": "application/sbom+json",  // ← Clear: this IS an SBOM
   "config": {
-          "mediaType": "application/vnd.oci.image.config.v1+json",
-          "digest": "sha256:f86f68d24ba57fe73657379025a0f5274cbfa86a5921726cdb8320b06f512bcf",
-          "size": 3738
+    "mediaType": "application/vnd.oci.empty.v1+json",  // ← Can be empty; no semantic meaning
+    "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "size": 2
+  },
+  "layers": [ ... ]
+}
+```
+The `mediaType` tells a tool to process this document as a standard OCI Manifest but the `artifactType` can inform the user what this artifact is. In this case it's and SBOM in JSON format.
+
+The OCI standard also standardised how an empty object is defined using the mediaType `application/vnd.oci.empty.v1+json`. This is to support backwards compatibility as having and empty field or removed it completely may effect older repositories.
+
+### subject
+As mentioned earlier, one of the main drivers for improving the support of other artifactTypes in OCI was the need to store artifacts associated with Image. These most important are SBOM and Code signatures. When a user transfers an image from a global OCI regostry to their local OCI registry, they would also want to pull any associated artifacts which would go with it. 
+
+The `subject` parameter was added to allow an associated artifact to state what resource it relates to. A more complete example of an SBOM manifest is below. It contains a `subject` which contains a Content Descriptor for an Image Manifest.
+```json
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "artifactType": "application/sbom+json",  // ← NOW IT'S CLEAR: this is an SBOM
+  "subject": {
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "digest": "sha256:5b0bcabd1ed22e9fb1310cf6c2dec7cdef19f0ad69efa1f392e94a4333501270"  // ← Points to the image it belongs to
+  },
+  "config": {
+    "mediaType": "application/vnd.oci.empty.v1+json",  // Empty, since this isn't a runnable image
+    "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "size": 2
   },
   "layers": [
     {
-      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-      "digest": "sha256:d3531b7a4f217bdc3426c57bcff84c170f086f456a39689d4a615c6d026c4be0",
-      "size": 4190488
-    },
-    {
-      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-      "digest": "sha256:c350b7085d431e71de1265a6089c0292f478dd77f30dfae79c830de0b2911767",
-      "size": 2816243
-    },
-    {
-      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-      "digest": "sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1",
-      "size": 32
-    },
-    {
-      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-      "digest": "sha256:dd074ddc4ec1c38fdfdfcdde957adf9a59a78771d9504b2f21cf80f94f3a7758",
-      "size": 10755331
-    },
-    {
-      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-      "digest": "sha256:3a84628cfcc37f6d1409747e22d938e0c4a41c947a88da806309b04780345234",
-      "size": 5062507
-    },
-    {
-      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-      "digest": "sha256:6b0b6f7fdd67eb2f4db77a00522d2329ca8d59798119b5697c0de0f37356dde4",
-      "size": 2133
-    },
-    {
-      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-      "digest": "sha256:1d99b3acb206bffebe87f7d1809e101ebcf1652138f09712c59c5d121922fd9d",
-      "size": 1198
-    },
-    {
-      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-      "digest": "sha256:0eee9ce505051b8e093169e678c11d030e4f9327df4c44313846cdc470ca49d3",
-      "size": 10759708
+      "mediaType": "application/json",
+      "digest": "sha256:def456...",
+      "size": 10000
     }
   ]
 }
 ```
-
-# OCI Summary
-The OCI standard allows tools to understand the contents of an OCI registry and perform actions based on what it find there. The address of any object is simply the SHA256 of the data contained within. The type of data does not matter as the content is just binary. 
+The OCI registry API definition in the OCI Distribution spec was updated to have a `referrers` resource. To find all SBOM artifacts related to an image we would call:
+```http
+GET /v2/<name>/referrers/<digest>?artifactType=application/sbom+json
+```
 
