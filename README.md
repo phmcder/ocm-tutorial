@@ -1,7 +1,19 @@
 # Docker and OCI
 In this tutorial we will be looking at the structure of an OCI registry and how it stores information.
 
-# OCI 1.0
+# Deploy a local OCI Registry
+## Pre-Requisites
+You will need Docker-Desktop and the Docker CLI installed
+
+## Deployment Steps
+The following command will start an instance of the [Zot OCI Registry](https://zotregistry.dev/) in Docker Desktop
+```bash
+docker compose up
+```
+The Registry UI is accessible through a web browser at http://localhost:5000 
+
+
+# The OCI Standard 1.0
 
 The Open Container Initiative (OCI) is a Linux Foundation project, started in June 2015 by Docker, CoreOS, and the maintainers of `appc` (short for "App Container") to design open standards for operating system-level virtualization (containers). There are currently three OCI specifications in development and use: 
 - *Runtime*: how to configure and execute a container.
