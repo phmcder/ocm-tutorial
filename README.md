@@ -1,11 +1,11 @@
 # Docker and OCI
 In this tutorial we will be looking at the structure of an OCI registry and how it stores information.
 
-# Deploy a local OCI Registry
-## Pre-Requisites
+## Deploy a local OCI Registry
+### Pre-Requisites
 You will need Docker-Desktop and the Docker CLI installed
 
-## Deployment Steps
+### Deployment Steps
 The following command will start an instance of the [Zot OCI Registry](https://zotregistry.dev/) in Docker Desktop
 ```bash
 docker compose up
@@ -13,13 +13,29 @@ docker compose up
 The Registry UI is accessible through a web browser at http://localhost:5000 
 
 
-# The OCI Standard 1.0
 
+## OCI Overview 
 The Open Container Initiative (OCI) is a Linux Foundation project, started in June 2015 by Docker, CoreOS, and the maintainers of `appc` (short for "App Container") to design open standards for operating system-level virtualization (containers). There are currently three OCI specifications in development and use: 
 - *Runtime*: how to configure and execute a container.
 - *Image*: how to package configuration, filesystem layers, and manifests.
 - *Distribution*: how to transfer images and other content through registries, based on Docker’s Registry HTTP API V2.
 
+Here are some basic facts about OCI that will help with this tutorial
+- An OCI `registry` works as a key:value pairs store with the value being any blob of data and the key being the digest/hash of the blob
+- A blob is only stored once because the blob content and its and hash will always the same no matter the artifact.
+- You can save a lot of OCI storage space if you make use of the same base images for you builds as you will be storing fewer unique blobs.
+- A `manifest` is used to tell a user/tool, which blobs are required to makeup an Artifact. 
+- A manifest file refers to blobs as `layers` and use each layer entry states the blob digest to help retrieval.
+- Artifacts can be any collection of data. For example Container Images, Helm Charts or Documents like Digital Signatures and Software Bill of Materials (SBOM)
+- An OCI `repository` is a mechanism to scope API calls to specific collections of manifests relating to multiple versions on the same artifact.
+  - For example when pulling from this address docker.io/library/alpine:3.24.4
+    - the registry is: docker.io
+    - the repository is: library/alpine
+    - the tag is: 3.24.4
+- tags are applied to the `repository` and act as aliases for manifest digests. Pulling tag docker.io/library/alpine:3.24.4 is the same as pulling docker.io/library/alpine:@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+ 
+
+## The OCI Standard 1.0
 The OCI Image Format Project was split out from the Runtime Project into its own specification on March 23, 2016 and was ratified into version 1.0.0 on July 19, 2017.
 
 The first release defined the structure of a container. At it's base level, a container is a collection of binary object which can be retrieved by their digest (sha256 hash of the object). To make it easier for an application to decode those binary objects, the OCI standard defines a number of `mediaTypes`.
@@ -38,7 +54,7 @@ manifest -->|1 to 1| config[Image Configuration\n`application/vnd.oci.image.conf
 manifest -->|1 to many| layers[Binary Layers\n`application/vnd.oci.image.layer.v1.tar`\n`application/vnd.oci.image.layer.v1.tar+gzip`]
 ```
 
-## Content Descriptors
+### Content Descriptors
 References between components in the graph are expressed through *Content Descriptors*. A Content Descriptor includes the `mediaType` of the (digest) which is used to identify and retrieve the content, and the byte-size of the raw stored data. Below is an example of a *Content Descriptors*
 ```json
 {
@@ -68,7 +84,7 @@ Whilst `mediaType`, `size` and `digest` are mandatory, `annotations` are optiona
 - `org.opencontainers.image.ref.name` Name of the reference for a target (string).
 
 
-## Image Manifests
+### Image Manifests
 The *Image Manifest* (`application/vnd.oci.image.manifest.v1+json`) pulls multiple Content Descriptors together to describe an and OCI `Image`. Here is an example
 ```json
 {
@@ -135,7 +151,7 @@ A user can use the Helm cli to pull the chart from the registry using `helm pull
 
 The same goes for other communities that have also appropriated the OCI standard. They also defined their own `mediaTypes` to cover their use cases.
 
-# Image Manifest Index
+### Image Manifest Index
 
 The final type defined by the OCI spec is the Image Manifest List `application/vnd.oci.image.index.v1+json`. Below is an example of what one may look like:
 ```json
